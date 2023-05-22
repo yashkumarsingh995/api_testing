@@ -1,0 +1,11 @@
+events:
+    - http:
+        method: any
+        path: "/"
+        cors: ${file(../../../common/custom.yml):cors}
+        # No authorizer so we can view the docs
+    - http:
+        method: any
+        path: "/{proxy+}"
+        cors: ${file(../../../common/custom.yml):cors}
+        # No authorizer so we can view the docs

@@ -1,0 +1,15 @@
+{
+  "name": "mail--core",
+  "description": "",
+  "version": "0.1.0",
+  "dependencies": {
+    "serverless": "3.7.4",
+    "serverless-function-outputs": "^0.0.1",
+    "serverless-lift": "^1.17.0",
+    "serverless-python-requirements": "^5.4.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "deploy": "sls deploy --verbose --stage"
+  }
+}

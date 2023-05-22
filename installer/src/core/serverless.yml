@@ -1,0 +1,359 @@
+service: installers--core
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${self:custom.common.awsRegionName}
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.common.stage}}
+  versionFunctions: false
+  # Turn on X-Ray
+  tracing:
+    lambda: true
+    apiGateway: true
+  environment:
+    ALERTS_TABLE: ${self:custom.alertsTable}
+    BACKGROUND_CHECK_API_ROOT: ${self:custom.backgroundCheckApiRoot.${self:custom.common.stage}}
+    BACKGROUND_CHECK_SECRET_NAME: ${self:custom.backgroundCheckSecretsKey}
+    BACKGROUND_CHECK_STATUS_QUEUE_URL: ${construct:BackgroundCheckStatusQueue.queueUrl}
+    CERTIFICATION_RESPONSE_BUCKET: ${self:custom.certificationResponseBucket}
+    USER_DATA_BUCKET: ${self:custom.userDataBucket}
+    VERIFY_CERTIFICATION_QUEUE_URL: ${construct:CertificationQueue.queueUrl}
+  iam:  # global iam role for all resources
+    role:
+      statements:
+        - ${file(../../../common/resource.policy.yml):statements.logs}
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+          Resource:
+            - "Fn::Join":
+                - ":"
+                - - "arn:aws:logs"
+                  - Ref: "AWS::Region"
+                  - Ref: "AWS::AccountId"
+                  - "log-group:/aws/lambda/installers--core-${opt:stage, self:provider.stage}-*:log-stream:*"
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+            - s3:*Object
+          Resource:
+            - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}'
+            - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}/*'
+        - Effect: Allow
+          Action:
+          - dynamodb:Batch*
+          - dynamodb:*Item
+          - dynamodb:Query
+          - dynamodb:Scan
+          Resource:
+            - '${self:custom.alertsTableArn}'
+            - '${self:custom.alertsTableArn}/index/*'
+
+plugins:
+  - serverless-function-outputs
+  - serverless-lift
+  - serverless-python-requirements
+
+custom:
+  common: ${file(../../../common/custom.yml)}
+  alerts: ${file(../../../common/alerts.yml)}
+  logRetentionInDays: ${file(../../../common/logRetention.yml)}
+  alertsTable: ${cf:auth--core-${self:custom.common.stage}.AlertsTableName}
+  alertsTableArn: ${cf:auth--core-${self:custom.common.stage}.AlertsTableArn}
+  backgroundCheckApiRoot:
+    dev: https://sandbox.clearchecks.com/api
+    staging: https://sandbox.clearchecks.com/api
+    prod: https://app.clearchecks.com/api
+  backgroundCheckSecretsKey: background-check-secret--${self:custom.common.stage}
+  certificationResponseBucket: ${self:custom.common.appPrefix}--certifications-responses
+  companyDataBucket: ${self:custom.common.appPrefix}--company-data
+  installerCodesTable: ${self:custom.common.appPrefix}--installer-codes
+  installerQualificationTable: ${self:custom.common.appPrefix}--installer-qualification
+  installerServiceAreaTable: ${self:custom.common.appPrefix}--service-area
+  installerUserPoolArn: arn:aws:cognito-idp:${aws:region}:${aws:accountId}:userpool/${cf:auth--core-${self:custom.common.stage}.InstallerUserPoolId}
+  installerUserPoolId: ${cf:auth--core-${self:custom.common.stage}.InstallerUserPoolId}
+  userDataBucket: ${cf:auth--core-${self:custom.common.stage}.UserDataBucket}
+  zipCodeDistanceBucket: ${self:custom.common.appPrefix}--zip-code-distance
+  useTTL:
+    dev: true
+    staging: true
+    prod: false
+  pythonRequirements:
+    pythonBin: python3
+    slim: true
+    useStaticCache: false
+    dockerizePip: true
+    dockerRunCmdExtraArgs: ['--platform', 'linux/amd64', '-v', '${env:PWD}/../../../common/rctools:/var/rctools']
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests
+
+constructs:
+  BackgroundCheckStatusQueue:
+    type: queue
+    worker:
+      handler: background_check.check_order_status
+      alarm: team-readicharge@thenewfoundry.com 
+      delay: 900  # 15 minutes before starting
+      # timeout: 300  # 5 minutes
+
+  CertificationQueue:
+    type: queue
+    worker:
+      handler: certification.verify_certification
+      alarm: team-readicharge@thenewfoundry.com 
+      maxBatchingWindow: 60
+
+functions:
+  QueueBackgroundStatusCheck:
+    handler: handler.queue_background_status_check
+    role: !GetAtt LambdaRole.Arn
+  QueueVerifyCertificationCheck:
+    handler: handler.queue_verify_certification
+    role: !GetAtt LambdaRole.Arn
+  # RequestBackgroundCheckHashKey:
+  #   handler: handler.request_background_check_hash_key
+  #   role: !GetAtt LambdaRole.Arn
+  # SubmitBackgroundCheck:
+  #   handler: handler.submit_background_check
+  #   role: !GetAtt LambdaRole.Arn
+
+resources:
+  Conditions:
+    IsNotDev:
+      Fn::Not:
+        - Fn::Equals:
+            - ${self:custom.common.stage}
+            - dev
+  Resources:
+    CertificationResponseBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.certificationResponseBucket}
+        VersioningConfiguration:
+          Status: Enabled
+
+    CompanyDataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.companyDataBucket}
+        VersioningConfiguration:
+          Status: Enabled
+
+    InstallerCodesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: code
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: code
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.installerCodesTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        TimeToLiveSpecification:
+          AttributeName: TimeToLive
+          Enabled: ${self:custom.useTTL.${self:custom.common.stage}}
+
+    InstallerServiceAreaTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: zip_code
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+          -
+            AttributeName: installer_id
+            AttributeType: S
+          -
+            AttributeName: company_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: zip_code
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: gsiInstallerIndex
+            KeySchema:
+              - AttributeName: installer_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - customer_id
+                - conversation_id
+              ProjectionType: INCLUDE
+          - IndexName: gsiCompanyIndex
+            KeySchema:
+              - AttributeName: company_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - customer_id
+                - conversation_id
+              ProjectionType: INCLUDE
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.installerServiceAreaTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        TimeToLiveSpecification:
+          AttributeName: TimeToLive
+          Enabled: ${self:custom.useTTL.${self:custom.common.stage}}
+
+    InstallerQualificationTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.installerQualificationTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        TimeToLiveSpecification:
+          AttributeName: TimeToLive
+          Enabled: ${self:custom.useTTL.${self:custom.common.stage}}
+
+    ZipCodeDistanceBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.zipCodeDistanceBucket}
+        VersioningConfiguration:
+          Status: Enabled
+      
+    LambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.common.appPrefix}--exec
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        PermissionsBoundary: !Sub "${self:custom.common.baselinePermissionBoundaryArn}"
+        Policies:
+          - PolicyName: ${self:custom.common.appPrefix}--exec-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - ${file(../../../common/resource.policy.yml):statements.logs}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - logs:DescribeLogStreams
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/installers--core-${opt:stage, self:provider.stage}-*:log-stream:*"
+                - Effect: Allow
+                  Action: 
+                    - cognito:*Users
+                    - cognito-identity:GetUser
+                    - cognito-idp:ListUsers
+                    - cognito-idp:Admin*User
+                    - cognito-idp:Admin*Group
+                    - cognito-idp:AdminUpdateUserAttributes
+                    - cognito-idp:AdminResetUserPassword
+                  Resource: 'arn:aws:cognito-idp:us-east-2:${self:custom.common.accountId}:userpool/us-east-2_*'
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:*Object
+                  Resource:
+                    - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}'
+                    - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}/*'
+                - Effect: Allow
+                  Action:
+                    - sqs:SendMessage
+                    - sqs:GetQueueUrl
+                  Resource:
+                    # - ${construct:BackgroundCheckQueue.queueArn}
+                    - ${construct:BackgroundCheckStatusQueue.queueArn}
+                    - ${construct:CertificationQueue.queueArn}
+                - Effect: Allow
+                  Action:
+                  - secretsmanager:GetSecretValue
+                  Resource: ${self:custom.common.secretsManagerArn}
+    
+  Outputs:
+    BackgroundCheckApiRoot:
+      Value: ${self:custom.backgroundCheckApiRoot.${self:custom.common.stage}}
+    BackgroundCheckSecretsKey:
+      Value: ${self:custom.backgroundCheckSecretsKey}
+    CertificationResponseBucket:
+      Value:
+        Ref: CertificationResponseBucket
+    CompanyDataBucket:
+      Value:
+        Ref: CompanyDataBucket
+    InstallerCodesTableArn:
+      Value:
+        Fn::GetAtt: [ InstallerCodesTable, Arn ]
+    InstallerCodesTableName:
+      Value: ${self:custom.installerCodesTable}
+    InstallerServiceAreaTableArn:
+      Value:
+        Fn::GetAtt: [ InstallerServiceAreaTable, Arn ]
+    InstallerServiceAreaTableName:
+      Value: ${self:custom.installerServiceAreaTable}
+    InstallerQualificationTableArn:
+      Value:
+        Fn::GetAtt: [ InstallerQualificationTable, Arn ]
+    InstallerQualificationTableName:
+      Value: ${self:custom.installerQualificationTable}
+    ZipCodeDistanceBucket:
+      Value:
+        Ref: ZipCodeDistanceBucket

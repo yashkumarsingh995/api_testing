@@ -1,0 +1,24 @@
+stage: ${opt:stage, self:provider.stage}
+appPrefix: ${self:service}--${opt:stage, self:provider.stage}
+awsRegionName: us-east-2
+cors:
+  origin: "*"
+  headers:
+    - Accept
+    - Accept-Encoding
+    - Authorization
+    - Cache-Control
+    - Content-Range
+    - Content-Type
+    - Range
+    - X-Amz-Date
+    - X-Amz-Security-Token
+    - X-Amz-Access-Token
+    - X-Amz-User-Agent
+    - X-Api-Key
+  allowCredentials: false
+crossAccountId: "014361974577" # Our primary NF cross account id
+accountId: "800079107722" # Account Id for RC.
+baselinePermissionBoundaryArn: arn:aws:iam::800079107722:policy/BaselinePermissionsBoundary
+domainCertificateArn: arn:aws:acm:us-east-1:800079107722:certificate/a62bba39-ec46-4935-9e75-659bc49253b1
+secretsManagerArn: arn:aws:secretsmanager:us-east-2:800079107722:secret:*

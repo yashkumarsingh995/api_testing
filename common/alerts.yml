@@ -1,0 +1,51 @@
+# TODO: verify this is what we want for RC. Pulled from Gild/nbox
+# Common alerting configuration which can be inserted into the custom: section of any service
+alerts:
+  stages:
+    # Select which stages to deploy alarms to
+    - prod-a
+    - prod-b
+    - staging-1
+    - staging-2
+  dashboards: true
+  # Optionally - naming template for alarms, can be overwritten in definitions
+  nameTemplate: $[functionName]--$[metricName]--alarm
+
+  topics:
+    ok: ${self:service}--${opt:stage, self:provider.stage}--alerts-ok
+    alarm: ${self:service}--${opt:stage, self:provider.stage}--alerts-alarm
+    notifications:
+      - protocol: email
+        endpoint: team-readicharge-ops@thenewfoundry.com
+    insufficientData: ${self:service}--${opt:stage, self:provider.stage}--alerts-insufficient
+  definitions:
+    # These defaults are merged with definitions below
+    functionErrors:
+      period: 300 # override period
+      treatMissingData: notBreaching
+    functionDuration:
+      threshold: 1000
+    executionExceptionsMetric:
+      metric: execution-exceptions
+      threshold: 0
+      statistic: Minimum
+      period: 60
+      evaluationPeriods: 1
+      comparisonOperator: GreaterThanThreshold
+      pattern: "exception"
+      treatMissingData: notBreaching
+    executionErrorsMetric:
+      metric: execution-errors
+      threshold: 0
+      statistic: Minimum
+      period: 60
+      evaluationPeriods: 1
+      comparisonOperator: GreaterThanThreshold
+      pattern: "[ERROR]"
+      treatMissingData: notBreaching
+  alarms:
+    - executionExceptionsMetric
+    - executionErrorsMetric
+    - functionErrors
+    - functionDuration
+    - functionThrottles

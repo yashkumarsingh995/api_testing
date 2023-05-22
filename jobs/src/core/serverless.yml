@@ -1,0 +1,122 @@
+service: jobs--core
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${self:custom.common.awsRegionName}
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.common.stage}}
+  # Turn on X-Ray
+  tracing:
+    lambda: true
+    apiGateway: true
+  environment:
+    JOB_NOTE_BUCKET: ${self:custom.jobNoteBucket}
+    JOB_PHOTO_BUCKET: ${self:custom.jobPhotoBucket}
+    JOBS_TABLE: ${self:custom.jobsTable}
+  
+plugins:
+  - serverless-lift
+
+custom:
+  common: ${file(../../../common/custom.yml)}
+  alerts: ${file(../../../common/alerts.yml)}
+  jobNoteBucket: ${self:custom.common.appPrefix}--job-notes
+  jobPhotoBucket: ${self:custom.common.appPrefix}--job-photos
+  logRetentionInDays: ${file(../../../common/logRetention.yml)}
+  jobsTable: ${self:custom.common.appPrefix}--jobs-table
+  useTTL:
+    dev: true
+    staging: true
+    prod: false
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests
+
+resources:
+  Conditions:
+    IsNotDev:
+      Fn::Not:
+        - Fn::Equals:
+            - ${self:custom.common.stage}
+            - dev
+  Resources:
+    ### Job Note Storage
+    JobNoteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.jobNoteBucket}
+        VersioningConfiguration:
+          Status: Enabled
+
+    ### Job photo Storage
+    JobPhotoBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.jobPhotoBucket}
+        VersioningConfiguration:
+          Status: Enabled
+
+    JobsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - 
+            AttributeName: ticket_id
+            AttributeType: S
+          -
+            AttributeName: customer_id
+            AttributeType: S
+          -
+            AttributeName: installer_id
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: ticket_id
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: customer_id
+            KeySchema:
+              - AttributeName: customer_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+          - IndexName: installer_id
+            KeySchema:
+              - AttributeName: installer_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.jobsTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        # TimeToLiveSpecification:   ## XXX enable this later along with lifecycle methods on buckets
+        #   AttributeName: TimeToLive
+        #   Enabled: ${self:custom.useTTL.${self:custom.common.stage}}
+
+  Outputs:
+    JobsTableArn:
+      Value:
+        Fn::GetAtt: [ JobsTable, Arn ]
+    JobsTableName:
+      Value: ${self:custom.jobsTable}
+    JobNoteBucket:
+      Value: ${self:custom.jobNoteBucket}
+    JobPhotoBucket:
+      Value: ${self:custom.jobPhotoBucket}

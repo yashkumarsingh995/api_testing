@@ -1,0 +1,80 @@
+{
+    "data": 
+        {
+            "id": "b8914fab-70ef-4923-b339-c322c0fdc611",
+            "name": "Battery Inc",
+            "type": "Company",
+            "jobs": 16,
+            "state": "MI",
+            "rating": 4,
+            "phone_number": "(000) 000-0000",
+            "address1": "123 Main St",
+            "address2": "Sutie #200",
+            "city": "ann arbor",
+            "companyName": "Battery Inc",
+            "region": 48105,
+            "preferred": false,
+            "referred": true,
+            "companyInstallers": [
+                    {
+                        "id": "1",
+                        "experience": 3,
+                        "name": "Georgs at Company",
+                        "type": "Company",
+                        "jobs": 16,
+                        "state": "MI",
+                        "rating": 3,
+                        "email": "name@email.com",
+                        "phone_number": "(000) 000-0000",
+                        "address1": "123 Main St",
+                        "address2": "Sutie #200",
+                        "city": "ann arbor",
+                        "companyName": "Company Inc.",
+                        "region": 48105
+                    },
+                {
+                        "id": "2",
+                        "experience": 4,
+                        "name": "Jane at Company",
+                        "type": "Individual",
+                        "jobs": 30,
+                        "state": "MI",
+                        "rating": 4,
+                        "email": "name@email.com",
+                        "phone_number": "(000) 000-0000",
+                        "address1": "123 Main St",
+                        "address2": "Sutie #200",
+                        "city": "ann arbor",
+                        "companyName": "Company Inc.",
+                        "region": 48105
+                },
+                {
+                        "id": "3",
+                        "experience": 2,
+                        "name": "John At company",
+                        "type": "Company",
+                        "jobs": 1,
+                        "state": "AR",
+                        "rating": 1,
+                        "email": "name@email.com",
+                        "phone_number": "(000) 000-0000",
+                        "address1": "123 Main St",
+                        "address2": "Sutie #200",
+                        "city": "ann arbor",
+                        "companyName": "Company Inc.",
+                        "region": 48105
+                }
+            ],
+            "account": {
+                "email": "name@email.com",
+                "phone_number": "(000) 000-0000",
+                "address1": "123 Main St",
+                "address2": "Sutie #200",
+                "city": "ann arbor",
+                "companyName": "Company Inc. Owner",
+                "state": "MI",
+                "region": 48105
+            }
+        }
+    
+}

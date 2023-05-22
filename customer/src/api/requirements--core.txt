@@ -1,0 +1,4 @@
+boto3==1.21.30
+fastapi==0.75.0
+mangum==0.14.1
+python-multipart==0.0.5

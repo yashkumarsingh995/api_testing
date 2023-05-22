@@ -1,0 +1,524 @@
+service: auth--core
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${self:custom.common.awsRegionName}
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.common.stage}}
+  # Turn on X-Ray
+  tracing:
+    lambda: true
+    apiGateway: true
+  environment:
+    ALERTS_TABLE_NAME: ${self:custom.alertsTable}
+    RESERVATIONS_TABLE: ${cf:schedule--core-${self:custom.common.stage}.ReservationsTableName}  # XXX remove after rctools.scheduling fix
+    SEND_EMAIL_TO_QUEUE_LAMBDA_NAME: ${self:custom.queueSendEmailName}
+    USER_DATA_BUCKET: ${self:custom.userDataBucket}  # XXX remove after rctools.scheduling fix
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  # NOTE: file is relative to service path: https://github.com/serverless/serverless/issues/6039
+  common: ${file(../../../common/custom.yml)}
+  alerts: ${file(../../../common/alerts.yml)}
+  logRetentionInDays: ${file(../../../common/logRetention.yml)}
+  alertsTable: ${self:custom.common.appPrefix}--alerts-table
+  customerUserPool:
+    name: ${self:custom.common.appPrefix}-user-pool-customer
+    domainName: ${self:custom.common.appPrefix}-user-pool-customer-domain
+    clientName: rc-${self:custom.common.appPrefix}-user-pool-customer
+    groupSuffix: ${self:custom.common.appPrefix}--group-customer
+  installerUserPool:
+    name: ${self:custom.common.appPrefix}-user-pool-installer
+    domainName: ${self:custom.common.appPrefix}-user-pool-installer-domain
+    clientName: rc-${self:custom.common.appPrefix}-user-pool-installer
+  adminUserPool:
+    name: ${self:custom.common.appPrefix}-user-pool-admin
+    domainName: ${self:custom.common.appPrefix}-user-pool-admin-domain
+    clientName: rc-${self:custom.common.appPrefix}-user-pool-admin
+    groupSuffix: ${self:custom.common.appPrefix}--group-admin
+  messagesTable: ${self:custom.common.appPrefix}--message-table
+  queueSendEmailArn: ${cf:mail--core-${self:custom.common.stage}.QueueSendEmailLambdaFunctionArn}
+  queueSendEmailName: ${cf:mail--core-${self:custom.common.stage}.QueueSendEmailLambdaFunctionName}
+  userDataBucket: ${self:custom.common.appPrefix}--user-data
+  pythonRequirements:
+    pythonBin: python3
+    slim: true
+    useStaticCache: false
+    dockerizePip: true
+    dockerRunCmdExtraArgs: ['--platform', 'linux/amd64', '-v', '${env:PWD}/../../../common/rctools:/var/rctools']
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests
+
+functions:
+  adminPreSignUp:
+    handler: handler.admin_pre_sign_up
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.adminUserPool.name}
+          trigger: PreSignUp
+          existing: true
+  adminCustomMessage:
+    handler: handler.admin_custom_message
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.adminUserPool.name}
+          trigger: CustomMessage
+          existing: true
+  customerCustomMessage:
+    handler: handler.customer_pre_sign_up
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.customerUserPool.name}
+          trigger: CustomMessage
+          existing: true
+  customerPreSignUp:
+    handler: handler.customer_pre_sign_up
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.customerUserPool.name}
+          trigger: PreSignUp
+          existing: true
+  installerCustomMessage:
+    handler: handler.installer_custom_message
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.installerUserPool.name}
+          trigger: CustomMessage
+          existing: true
+  installerPostConfirmation:
+    handler: handler.installer_post_confirmation
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.installerUserPool.name}
+          trigger: PostConfirmation
+          existing: true
+  installerPreSignUp:
+    handler: handler.installer_pre_sign_up
+    role: !GetAtt LambdaAuthCoreRole.Arn
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.installerUserPool.name}
+          trigger: PreSignUp
+          existing: true
+  
+resources:
+  Conditions:
+    IsNotDev:
+      Fn::Not:
+        - Fn::Equals:
+            - ${self:custom.common.stage}
+            - dev
+  Resources:
+    # Cognito user pool naming schema CognitoUserPool${name} required by duplicate create issue
+    # BUG: https://github.com/serverless/serverless/issues/5282
+    ### Customer User Pool
+    CustomerUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.customerUserPool.name}
+        UsernameAttributes:
+          - email
+        UsernameConfiguration:
+          CaseSensitive: false
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy: ${file(./policies/passwords.yml):customer}
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+
+    CustomerUserPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain
+      Properties:
+        Domain: ${self:custom.customerUserPool.domainName}
+        UserPoolId:
+          Ref: CustomerUserPool
+
+    CustomerUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.customerUserPool.clientName}
+        UserPoolId:
+          Ref: CustomerUserPool
+        SupportedIdentityProviders:
+          - COGNITO
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+        # # The time limit, after which the ID token is no longer valid and cannot be used
+        # IdTokenValidity: 1
+        # RefreshTokenValidity: 30
+        PreventUserExistenceErrors: ENABLED
+
+    ### Installer User Pool
+    InstallerUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.installerUserPool.name}
+        UsernameAttributes:
+          - email
+        UsernameConfiguration:
+          CaseSensitive: false
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy: ${file(./policies/passwords.yml):installer}
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+
+    InstallerUserPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain
+      Properties:
+        Domain: ${self:custom.installerUserPool.domainName}
+        UserPoolId:
+          Ref: InstallerUserPool
+
+    InstallerUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.installerUserPool.clientName}
+        UserPoolId:
+          Ref: InstallerUserPool
+        SupportedIdentityProviders:
+          - COGNITO
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+        # # The time limit, after which the ID token is no longer valid and cannot be used
+        # IdTokenValidity: 1
+        # RefreshTokenValidity: 30
+        PreventUserExistenceErrors: ENABLED
+
+    ### Admin User Pool
+    AdminUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.adminUserPool.name}
+        UsernameAttributes:
+          - email
+        UsernameConfiguration:
+          CaseSensitive: false
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy: ${file(./policies/passwords.yml):admin}
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+
+    AdminUserPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain
+      Properties:
+        Domain: ${self:custom.adminUserPool.domainName}
+        UserPoolId:
+          Ref: AdminUserPool
+
+    AdminUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.adminUserPool.clientName}
+        UserPoolId:
+          Ref: AdminUserPool
+        SupportedIdentityProviders:
+          - COGNITO
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+        # # The time limit, after which the ID token is no longer valid and cannot be used
+        # IdTokenValidity: 1
+        # RefreshTokenValidity: 30
+        PreventUserExistenceErrors: ENABLED
+
+    ### User Data Storage
+    UserDataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.userDataBucket}
+        VersioningConfiguration:
+          Status: Enabled
+
+    ### User Pool Groups
+    CustomerResidentialGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.customerUserPool.groupSuffix}-residential
+        Description: "Residential group. At launch this is the default for everyone."
+        UserPoolId:
+          Ref: CustomerUserPool
+
+    CustomerCommercialGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.customerUserPool.groupSuffix}-commercial
+        Description: "Commercial group. At launch this is unused."
+        UserPoolId:
+          Ref: CustomerUserPool
+
+    RCAdminGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-rc-admin
+        Description: "RC Superadmin account. Access to everything."
+        UserPoolId:
+          Ref: AdminUserPool
+
+    OwnerAdminGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-owner-admin
+        Description: "Company owner/admins"
+        UserPoolId:
+          Ref: AdminUserPool
+
+    ManagerGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-manager
+        Description: "Company managers"
+        UserPoolId:
+          Ref: AdminUserPool
+
+    MarketingGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-marketing
+        Description: "RC Marketing"
+        UserPoolId:
+          Ref: AdminUserPool
+
+    ContentEditorGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-content-editor
+        Description: "Limited account. Will mostly see links to other resources."
+        UserPoolId:
+          Ref: AdminUserPool
+
+    SupportManagerGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-support-manager
+        Description: "Support rep, but can create more support reps."
+        UserPoolId:
+          Ref: AdminUserPool
+
+    SupportRepGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        GroupName: ${self:custom.adminUserPool.groupSuffix}-support-rep
+        Description: "Handles internal RC issues."
+        UserPoolId:
+          Ref: AdminUserPool
+
+    LambdaAuthCoreRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.common.appPrefix}--exec
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        PermissionsBoundary: !Sub "${self:custom.common.baselinePermissionBoundaryArn}"
+        Policies:
+          - PolicyName: ${self:custom.common.appPrefix}--exec-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - ${file(../../../common/resource.policy.yml):statements.logs}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - logs:DescribeLogStreams
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/auth--core-${opt:stage, self:provider.stage}-*:log-stream:*"
+                - Effect: Allow
+                  Action:
+                  - dynamodb:Batch*
+                  - dynamodb:*Item
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  Resource:
+                    - arn:aws:dynamodb:us-east-2:800079107722:table/${self:custom.alertsTable}
+                    - arn:aws:dynamodb:us-east-2:800079107722:table/${self:custom.alertsTable}/index/*'
+                - Effect: Allow
+                  Action:
+                    - cognito-idp:AdminGetUser
+                    - cognito-idp:AdminResetUserPassword
+                  Resource:
+                    - arn:aws:cognito-idp:us-east-2:800079107722:userpool/us-east-2_*
+                - Effect: Allow
+                  Action:
+                  - lambda:InvokeFunction
+                  Resource:
+                    - ${self:custom.queueSendEmailArn}
+
+    AlertsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: uid
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: uid
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.alertsTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        # TimeToLiveSpecification:   ## XXX enable this later along with lifecycle methods on buckets
+        #   AttributeName: TimeToLive
+        #   Enabled: ${self:custom.useTTL.${self:custom.common.stage}}
+
+    MessagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: conversation_id
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+          - 
+            AttributeName: installer_id
+            AttributeType: S
+          -
+            AttributeName: customer_id
+            AttributeType: S
+          - 
+            AttributeName: conversation_start
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: conversation_id
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: gsiInstallerIndex
+            KeySchema:
+              - AttributeName: installer_id
+                KeyType: HASH
+              - AttributeName: conversation_start
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - customer_id
+                - conversation_id
+              ProjectionType: INCLUDE
+          - IndexName: gsiCustomerIndex
+            KeySchema:
+              - AttributeName: customer_id
+                KeyType: HASH
+              - AttributeName: conversation_start
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - installer_id
+                - conversation_id
+              ProjectionType: INCLUDE
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.messagesTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        # TimeToLiveSpecification:   ## XXX enable this later along with lifecycle methods on buckets
+        #   AttributeName: TimeToLive
+        #   Enabled: ${self:custom.useTTL.${self:custom.common.stage}}
+
+  Outputs:
+    CustomerUserPoolId:
+      Value:
+        Ref: CustomerUserPool
+    InstallerUserPoolId:
+      Value:
+        Ref: InstallerUserPool
+    AdminUserPoolId:
+      Value:
+        Ref: AdminUserPool
+    UserDataBucket:
+      Value:
+        Ref: UserDataBucket
+    CustomerResidentialGroupId:
+      Value:
+        Ref: CustomerResidentialGroup
+    CustomerCommercialGroupId:
+      Value:
+        Ref: CustomerCommercialGroup
+    RCAdminGroupId:
+      Value:
+        Ref: RCAdminGroup
+    OwnerAdminGroupId:
+      Value:
+        Ref: OwnerAdminGroup
+    ManagerGroupId:
+      Value:
+        Ref: ManagerGroup
+    MarketingGroupId:
+      Value:
+        Ref: MarketingGroup
+    ContentEditorGroupId:
+      Value:
+        Ref: ContentEditorGroup
+    SupportManagerGroupId:
+      Value:
+        Ref: SupportManagerGroup
+    SupportRepGroupId:
+      Value:
+        Ref: SupportRepGroup
+    AlertsTableArn:
+      Value:
+        Fn::GetAtt: [ AlertsTable, Arn ]
+    AlertsTableName:
+      Value: ${self:custom.alertsTable}
+    MessagesTableArn:
+      Value:
+        Fn::GetAtt: [ MessagesTable, Arn ]
+    MessagesTableName:
+      Value: ${self:custom.messagesTable}
+  

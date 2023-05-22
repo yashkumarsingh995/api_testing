@@ -1,0 +1,13 @@
+events:
+  - http:
+      method: any
+      path: "/"
+      cors: ${file(../../../common/custom.yml):cors}
+      authorizer:
+        arn: arn:aws:cognito-idp:${aws:region}:${aws:accountId}:userpool/${cf:auth--core-${self:custom.common.stage}.InstallerUserPoolId}
+  - http:
+      method: any
+      path: "/{proxy+}"
+      cors: ${file(../../../common/custom.yml):cors}
+      authorizer:
+        arn: arn:aws:cognito-idp:${aws:region}:${aws:accountId}:userpool/${cf:auth--core-${self:custom.common.stage}.InstallerUserPoolId}

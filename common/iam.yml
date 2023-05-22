@@ -1,0 +1,190 @@
+# TODO: copied directly from Gild. Will need to be revised
+
+SlsCfnManagedPolicy:
+  Type: AWS::IAM::ManagedPolicy
+  Properties:
+    ManagedPolicyName: !Sub "${self:custom.common.appPrefix}--sls-cfn"
+    PolicyDocument:
+      Version: "2012-10-17"
+      Statement:
+        - Action:
+            - cloudtrail:DeleteAuth
+            - cloudtrail:StopLogging
+            - cloudtrail:UpdateAuth
+          Resource: "*"
+          Effect: Deny
+        - Action:
+            - iam:GetRole
+            - iam:PassRole
+            - iam:CreateRole
+            - iam:DeleteRole
+            - iam:AttachRolePolicy
+            - iam:DeleteRolePolicy
+            - iam:DetachRolePolicy
+            - iam:PutRolePolicy
+          Resource:
+            - !Sub "arn:aws:iam::#{AWS::AccountId}:role/${self:custom.common.appPrefix}--*"
+            - !Sub "arn:aws:iam::#{AWS::AccountId}:role/${self:custom.mainServiceName}-*"
+          Effect: Allow
+        - Action:
+            - cloudformation:Describe*
+            - cloudformation:List*
+            - cloudformation:Get*
+            - cloudformation:PreviewStackUpdate
+            - cloudformation:CreateStack
+            - cloudformation:UpdateStack
+          Resource:
+            # Note how the - between this and the stage are compressed from two to one
+            # This is intentional. when sls creates the stack, only one is used.
+            - !Sub "arn:aws:cloudformation:#{AWS::Region}:#{AWS::AccountId}:stack/${self:custom.mainServiceName}-*/*"
+          Effect: Allow
+        - Action:
+            - cloudformation:Describe*
+            - cloudformation:List*
+            - cloudformation:Get*
+          Resource:
+            # Deployer needs to be able to view outputs of other stacks
+            - !Sub "arn:aws:cloudformation:#{AWS::Region}:#{AWS::AccountId}:stack/*"
+          Effect: Allow
+        - Action:
+            - cloudformation:ValidateTemplate
+          Resource: "*"
+          Effect: Allow
+        - Action:
+            - s3:*
+          Resource: "*"
+          Effect: Allow
+        - Action:
+            - cognito-idp:*
+          Resource: "*"
+          Effect: Allow
+        - Action:
+            - dynamoDb:describeTable
+          Resource: "*"
+          Effect: Allow
+        - Action:
+            - logs:DescribeLogGroups
+          Resource: !Sub "arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:log-group::log-stream:*"
+          Effect: Allow
+        - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DeleteLogGroup
+            - logs:DeleteLogStream
+            - logs:DescribeLogStreams
+            - logs:FilterLogEvents
+            - logs:DeleteRetentionPolicy
+            - logs:PutRetentionPolicy
+          Resource:
+            - !Sub "arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:log-group:/aws/lambda/${self:custom.mainServiceName}*:log-stream*"
+          Effect: Allow
+        - Action:
+            - events:DescribeRule
+            - events:PutRule
+            - events:PutTargets
+            - events:RemoveTargets
+            - events:DeleteRule
+          Resource:
+            - !Sub "arn:aws:events:#{AWS::Region}:#{AWS::AccountId}:rule/${self:custom.mainServiceName}-*"
+          Effect: Allow
+        - Action:
+            - lambda:GetFunction
+            - lambda:CreateFunction
+            - lambda:DeleteFunction
+            - lambda:UpdateFunctionConfiguration
+            - lambda:UpdateFunctionCode
+            - lambda:PublishVersion
+            - lambda:CreateAlias
+            - lambda:DeleteAlias
+            - lambda:UpdateAlias
+            - lambda:GetFunctionConfiguration
+            - lambda:AddPermission
+            - lambda:RemovePermission
+            - lambda:InvokeFunction
+            - lambda:List*
+          Resource:
+            - !Sub "arn:aws:lambda:*:#{AWS::AccountId}:function:${self:custom.mainServiceName}*"
+          Effect: Allow
+        - Action:
+            - apigateway:*
+          Resource: "*"
+          Effect: Allow
+
+SlsCfnManagedPolicyCustom:
+  Type: AWS::IAM::ManagedPolicy
+  Properties:
+    ManagedPolicyName: !Sub "${self:custom.common.appPrefix}--sls-cfn-custom"
+    PolicyDocument:
+      Version: "2012-10-17"
+      Statement: ${file(./cfn.local.yml)}
+
+SlsCfnRole:
+  Type: AWS::IAM::Role
+  Properties:
+    AssumeRolePolicyDocument:
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - cloudformation.amazonaws.com
+          Action:
+            - sts:AssumeRole
+    ManagedPolicyArns:
+      - !Ref SlsCfnManagedPolicy
+      - !Ref SlsCfnManagedPolicyCustom
+    PermissionsBoundary: !Sub "${self:custom.common.baselinePermissionBoundaryArn}"
+
+SlsDeveloperRole:
+  Type: AWS::IAM::Role
+  Properties:
+    Description: "This role allows for developers working with the service for this stage. It may be assumed cross-account."
+    # Allow this to last for 12 hours
+    MaxSessionDuration: 43200
+    AssumeRolePolicyDocument:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Principal:
+            AWS:
+              - !Sub "#{AWS::AccountId}"
+          Action:
+            - sts:AssumeRole
+        - Effect: Allow
+          Principal:
+            AWS:
+              - !Sub "arn:aws:iam::${self:custom.common.crossAccountId}:root"
+          Action:
+            - sts:AssumeRole
+          Condition:
+            Bool:
+              aws:MultiFactorPresent: true
+    ManagedPolicyArns:
+      - !Ref SlsCfnManagedPolicy
+      - !Ref SlsCfnManagedPolicyCustom
+    PermissionsBoundary: !Sub "${self:custom.common.baselinePermissionBoundaryArn}"
+
+SlsDeployerRole:
+  Type: AWS::IAM::Role
+  Properties:
+    Description: "This role allows for deploying the this service for this stage. It may be assumed cross-account."
+    # Allow this to last for 2 hours
+    MaxSessionDuration: 7200
+    AssumeRolePolicyDocument:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Principal:
+            AWS:
+              - !Sub "#{AWS::AccountId}"
+          Action:
+            - sts:AssumeRole
+        - Effect: Allow
+          Principal:
+            AWS:
+              - !Sub "arn:aws:iam::${self:custom.common.crossAccountId}:root"
+          Action:
+            - sts:AssumeRole
+    ManagedPolicyArns:
+      - !Ref SlsCfnManagedPolicy
+      - !Ref SlsCfnManagedPolicyCustom
+    PermissionsBoundary: !Sub "${self:custom.common.baselinePermissionBoundaryArn}"

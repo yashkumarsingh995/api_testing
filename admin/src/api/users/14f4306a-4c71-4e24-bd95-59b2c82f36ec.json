@@ -1,0 +1,46 @@
+{
+    "data": {
+        "id": "14f4306a-4c71-4e24-bd95-59b2c82f36ec",
+        "name": "George Inc",
+        "type": "Company",
+        "jobs": 10,
+        "state": "MI",
+        "rating": 2,
+        "phone_number": "(000) 000-0000",
+        "address1": "123 Main St",
+        "address2": "Sutie #200",
+        "city": "ann arbor",
+        "companyName": "George Inc",
+        "region": 48105,
+        "preferred": true,
+        "referred": false,
+        "companyInstallers": [
+                {
+                    "id": "1",
+                    "experience": 3,
+                    "name": "Georgs at Company",
+                    "type": "Company",
+                    "jobs": 16,
+                    "state": "MI",
+                    "rating": 3,
+                    "email": "name@email.com",
+                    "phone_number": "(000) 000-0000",
+                    "address1": "123 Main St",
+                    "address2": "Sutie #200",
+                    "city": "ann arbor",
+                    "companyName": "Company Inc.",
+                    "region": 48105
+                }
+        ],
+        "account": {
+            "email": "name@email.com",
+            "phone_number": "(000) 000-0000",
+            "address1": "123 Main St",
+            "address2": "Sutie #200",
+            "city": "ann arbor",
+            "companyName": "Company Inc. Owner",
+            "state": "MI",
+            "region": 48105
+        }
+    }
+}

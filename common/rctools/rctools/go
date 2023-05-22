@@ -1,0 +1,58 @@
+#!/bin/bash
+
+set -e
+
+here="$( cd -P "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Modify locations of files/folders here. Rest of script will stay relatively the same.
+BIN_LOCATION="$here/../../../../../bin/role-auth"
+
+cmd=$1
+shift
+
+function verify_venv()
+{
+  if [ ! -d "$here/venv" ]; then
+    virtualenv venv
+  fi
+  if [ "$VIRTUAL_ENV" == "" ]; then
+    source venv/bin/activate
+  fi
+}
+
+
+case "$cmd" in
+
+auth)
+  AWS_CLI_PROFILE=${1:-default}
+
+  # 1 arg required
+  if [[ $# -ne 1 ]]; then
+    echo "Usage: eval \$($0 auth <AWS_CLI_PROFILE>)"
+    echo "Where:"
+    echo "   <AWS_CLI_PROFILE> = aws-cli profile usually in $HOME/.aws/config"
+    exit 2
+  fi
+
+  here="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  "$BIN_LOCATION" $AWS_CLI_PROFILE
+  ;;
+
+install-dev)
+  verify_venv
+  pip install -r requirements--dev.txt
+  ;;
+
+install-test)
+  verify_venv
+  pip install -r requirements--test.txt
+  ;;
+  
+notebook | nb)
+  jupyter notebook --NotebookApp.iopub_data_rate_limit=10000000.0
+  ;;
+
+test)
+  verify_venv
+  pytest
+esac

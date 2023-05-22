@@ -1,0 +1,86 @@
+service: mail--core
+
+provider:
+  name: aws
+  region: ${self:custom.common.awsRegionName}
+  runtime: python3.8
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.common.stage}}
+  versionFunctions: false
+  # Turn on X-Ray
+  tracing:
+    lambda: true
+    apiGateway: true
+  iam:  # global iam role for all resources
+    role:
+      statements:
+        - ${file(../../../common/resource.policy.yml):statements.logs}
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+          Resource:
+            - "Fn::Join":
+                - ":"
+                - - "arn:aws:logs"
+                  - Ref: "AWS::Region"
+                  - Ref: "AWS::AccountId"
+                  - "log-group:/aws/lambda/mail--core-${opt:stage, self:provider.stage}-*:log-stream:*"
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+            - sqs:GetQueueUrl
+          Resource:
+            - ${construct:SendEmailQueue.queueArn}
+        - Effect: Allow
+          Action:
+            - ses:SendEmail
+          Resource:
+            - arn:aws:ses:us-east-2:800079107722:*
+        # - Effect: Allow
+        #   Action:
+        #     - s3:ListBucket
+        #     - s3:*Object
+        #   Resource:
+        #     - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}'
+        #     - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}/*'
+  environment:
+    SERVICE_NAME: ${self:service}
+    SEND_EMAIL_QUEUE_URL: ${construct:SendEmailQueue.queueUrl}
+
+plugins:
+  - serverless-function-outputs
+  - serverless-lift
+  - serverless-python-requirements
+
+custom:
+  common: ${file(../../../common/custom.yml)}
+  alerts: ${file(../../../common/alerts.yml)}
+  logRetentionInDays: ${file(../../../common/logRetention.yml)}
+  pythonRequirements:
+    pythonBin: python3
+    slim: true
+    useStaticCache: false
+    dockerizePip: true
+    dockerRunCmdExtraArgs: ['--platform', 'linux/amd64', '-v', '${env:PWD}/../../../common/rctools:/var/rctools']
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests
+
+constructs:
+  SendEmailQueue:
+    type: queue
+    worker:
+      handler: handler.send_queued_email
+      fifo: true
+      maxRetries: 1
+      alarm: team-readicharge@thenewfoundry.com
+
+functions:
+  QueueSendEmail:
+    handler: handler.queue_send_email
+  

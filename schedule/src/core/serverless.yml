@@ -1,0 +1,130 @@
+service: schedule--core
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${self:custom.common.awsRegionName}
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.common.stage}}
+  # Turn on X-Ray
+  tracing:
+    lambda: true
+    apiGateway: true
+  environment:
+    RESERVATIONS_TABLE: ${self:custom.reservationTable}
+    JOB_SCHEDULE_TABLE: ${self:custom.jobScheduleTable}
+
+custom:
+  common: ${file(../../../common/custom.yml)}
+  alerts: ${file(../../../common/alerts.yml)}
+  logRetentionInDays: ${file(../../../common/logRetention.yml)}
+  reservationTable: ${self:custom.common.appPrefix}--reservation-table
+  jobScheduleTable: ${self:custom.common.appPrefix}--job-schedule-table
+  useTTL:
+    dev: true
+    staging: true
+    prod: false
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests
+
+resources:
+  Resources:
+    ReservationTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+          -
+            AttributeName: installer_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: installer_id
+            KeySchema:
+              - AttributeName: installer_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.reservationTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+          
+    JobScheduleTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: installer_id
+            AttributeType: S
+          -
+            AttributeName: ts
+            AttributeType: N
+          - 
+            AttributeName: ticket_id
+            AttributeType: S
+          -
+            AttributeName: customer_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: ticket_id
+            KeyType: HASH
+          -
+            AttributeName: ts
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: installer_id
+            KeySchema:
+              - AttributeName: installer_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+          - IndexName: customer_id
+            KeySchema:
+              - AttributeName: customer_id
+                KeyType: HASH
+              - AttributeName: ts
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+        BillingMode: PAY_PER_REQUEST
+        SSESpecification:
+          SSEEnabled: true
+          SSEType: KMS
+        TableName: ${self:custom.jobScheduleTable}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+  Outputs:
+    ReservationsTableArn:
+      Value:
+        Fn::GetAtt: [ ReservationTable, Arn ]
+    ReservationsTableName:
+      Value: ${self:custom.reservationTable}
+    JobScheduleTableArn:
+      Value:
+        Fn::GetAtt: [ JobScheduleTable, Arn ]
+    JobScheduleTableName:
+      Value: ${self:custom.jobScheduleTable}

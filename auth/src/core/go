@@ -1,0 +1,88 @@
+#!/bin/bash
+
+set -e
+
+here="$( cd -P "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+cmd=$1
+shift
+
+# Modify locations of files/folders here. Rest of script will stay relatively the same.
+BIN_LOCATION="$here/../../../../../bin/role-auth"
+
+function verify_node()
+{
+  if [ ! -d "$here/node_modules" ]; then
+    yarn install
+  fi
+}
+
+function verify_venv()
+{
+  if [ ! -d "$here/venv" ]; then
+    virtualenv venv
+  fi
+  if [ "$VIRTUAL_ENV" == "" ]; then
+    source venv/bin/activate
+  fi
+}
+
+
+case "$cmd" in
+
+auth)
+  AWS_CLI_PROFILE=${1:-default}
+
+  # 1 arg required
+  if [[ $# -ne 1 ]]; then
+    echo "Usage: eval \$($0 auth <AWS_CLI_PROFILE>)"
+    echo "Where:"
+    echo "   <AWS_CLI_PROFILE> = aws-cli profile usually in $HOME/.aws/config"
+    exit 2
+  fi
+
+  here="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  "$BIN_LOCATION" $AWS_CLI_PROFILE
+  ;;
+
+clean)
+
+  if ! command -v sls &> /dev/null
+  then
+      echo "COMMAND sls could not be found"
+      exit
+  fi
+
+  sls requirements clean && sls wsgi clean
+  ;;
+
+install)
+  verify_node
+  verify_venv
+  pip install -r requirements.txt
+  ;;
+
+install-dev)
+  verify_node
+  verify_venv
+  pip install -r requirements--dev.txt
+  ;;
+
+deploy)
+  STAGE=${1:-default}
+  if [[ "$1" == "" ]]; then
+    STAGE='dev'
+  fi
+
+  export GIT_HASH=$(git rev-parse --short HEAD)
+  echo "Deploying $GIT_HASH to... $STAGE"
+
+  verify_node
+  verify_venv
+  yarn run deploy $STAGE
+  ;;
+
+test)
+  verify_venv
+  pytest -p no:cacheprovider "$@"
+esac

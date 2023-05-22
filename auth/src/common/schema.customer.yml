@@ -1,0 +1,8 @@
+- Name: terms
+  Required: false
+  Mutable: true
+  AttributeDataType: String
+- Name: preferred_contact
+  Required: false
+  Mutable: true
+  AttributeDataType: String

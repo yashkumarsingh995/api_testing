@@ -1,0 +1,4 @@
+# TODO: verify this with client. For initial testing dev of 30 days is most important
+prod: 731
+staging: 60
+dev: 30

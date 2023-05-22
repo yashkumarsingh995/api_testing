@@ -1,0 +1,2 @@
+../../../common/rctools
+-r requirements--core.txt

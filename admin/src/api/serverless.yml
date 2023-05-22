@@ -1,0 +1,172 @@
+service: admin--api
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${self:custom.common.awsRegionName}
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.common.stage}}
+  # Turn on X-Ray
+  tracing:
+    lambda: true
+    apiGateway: true
+  environment:
+    GIT_HASH: ${env:GIT_HASH}
+    SERVICE_NAME: ${self:service}
+    # Auth
+    ADMIN_USER_POOL_ID: ${cf:auth--core-${self:custom.common.stage}.AdminUserPoolId}
+    ALERTS_TABLE: ${self:custom.alertsTable}
+    CERTIFICATION_LAMBDA_NAME: ${self:custom.certificationLambda}
+    COMPANY_DATA_BUCKET: ${self:custom.companyDataBucket}
+    CUSTOMER_USER_POOL_ID: ${cf:auth--core-${self:custom.common.stage}.CustomerUserPoolId}
+    INSTALLER_CODES_TABLE: ${self:custom.installerCodesTable}
+    INSTALLER_USER_POOL_ID: ${self:custom.installerUserPoolId}
+    INSTALLER_SERVICE_AREA_TABLE_NAME: ${self:custom.installerServiceAreaTable}
+    JOBS_TABLE: ${self:custom.jobsTable}
+    JOB_SCHEDULE_TABLE: ${self:custom.jobScheduleTable}
+    MANAGER_GROUP_ID: ${cf:auth--core-${self:custom.common.stage}.ManagerGroupId}
+    OWNER_ADMIN_GROUP_ID: ${cf:auth--core-${self:custom.common.stage}.OwnerAdminGroupId}
+    RC_ADMIN_GROUP_ID: ${cf:auth--core-${self:custom.common.stage}.RCAdminGroupId}
+    PUBLIC_API_ROOT: ${self:custom.publicApiRoot}
+    STRIPE_PRIVATE_KEY: ${self:custom.stripePrivateKey}
+    STAGE: ${self:custom.common.stage}
+    USER_DATA_BUCKET: ${cf:auth--core-${self:custom.common.stage}.UserDataBucket}
+    ZIP_CODE_DISTANCE_BUCKET: ${self:custom.zipCodeDistanceBucket}
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests
+    - "*.ipynb"
+
+custom:
+  common: ${file(../../../common/custom.yml)}
+  alerts: ${file(../../../common/alerts.yml)}
+  logRetentionInDays: ${file(../../../common/logRetention.yml)}
+  alertsTable: ${cf:auth--core-${self:custom.common.stage}.AlertsTableName}
+  alertsTableArn: ${cf:auth--core-${self:custom.common.stage}.AlertsTableArn}
+  adminUserPoolArn: arn:aws:cognito-idp:${aws:region}:${aws:accountId}:userpool/${cf:auth--core-${self:custom.common.stage}.AdminUserPoolId}
+  certificationLambda: ${cf:installers--core-${self:custom.common.stage}.QueueVerifyCertificationCheckLambdaFunctionArn}
+  companyDataBucket: ${cf:installers--core-${self:custom.common.stage}.CompanyDataBucket}
+  installerUserPoolId: ${cf:auth--core-${self:custom.common.stage}.InstallerUserPoolId}
+  installerCodesTable: ${cf:installers--core-${self:custom.common.stage}.InstallerCodesTableName}
+  installerCodesTableArn: ${cf:installers--core-${self:custom.common.stage}.InstallerCodesTableArn}
+  installerServiceAreaTable: ${cf:installers--core-${self:custom.common.stage}.InstallerServiceAreaTableName}
+  installerServiceAreaTableArn: ${cf:installers--core-${self:custom.common.stage}.InstallerServiceAreaTableArn}
+  jobScheduleTable: ${cf:schedule--core-${self:custom.common.stage}.JobScheduleTableName}
+  jobScheduleTableArn: ${cf:schedule--core-${self:custom.common.stage}.JobScheduleTableArn}
+  jobsTable: ${cf:jobs--core-${self:custom.common.stage}.JobsTableName}
+  jobsTableArn: ${cf:jobs--core-${self:custom.common.stage}.JobsTableArn}
+  publicApiRoot: ${cf:public--api-${self:custom.common.stage}.DomainName}
+  stripePrivateKey: stripe-api-key__${self:custom.common.stage}
+  zipCodeDistanceBucket: ${cf:installers--core-${self:custom.common.stage}.ZipCodeDistanceBucket}
+
+  customDomain:
+    domainName: ${self:service}--${self:custom.common.stage}.rcdevel.com
+    certificateArn: ${self:custom.common.domainCertificateArn}
+    basePath: ""
+    stage: ${self:custom.common.stage}
+    createRoute53Record: true
+  pythonRequirements:
+    pythonBin: python3
+    slim: true
+    useStaticCache: false
+    dockerizePip: true
+    dockerRunCmdExtraArgs: ['--platform', 'linux/amd64', '-v', '${env:PWD}/../../../common/rctools:/var/rctools']
+
+functions:
+  app:
+    name: ${self:custom.common.appPrefix}
+    handler: handler.handler
+    role: !GetAtt LambdaAuthApiRole.Arn
+    events: ${file(serverless.${self:custom.common.stage}.yml):events}
+    timeout: 30
+
+resources:
+  Resources:
+    LambdaAuthApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.common.appPrefix}--exec
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        PermissionsBoundary: !Sub "${self:custom.common.baselinePermissionBoundaryArn}"
+        Policies:
+          - PolicyName: ${self:custom.common.appPrefix}--exec-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - ${file(../../../common/resource.policy.yml):statements.logs}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - logs:DescribeLogStreams
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/auth--*--${opt:stage, self:provider.stage}:log-stream:*"
+                - Effect: Allow
+                  Action: 
+                    - cognito:*Users
+                    - cognito-identity:GetUser
+                    - cognito-idp:ListUsers
+                    - cognito-idp:Admin*User
+                    - cognito-idp:Admin*Group
+                    - cognito-idp:AdminUpdateUserAttributes
+                    - cognito-idp:AdminResetUserPassword
+                    - cognito-idp:AdminListGroupsForUser
+                  Resource: 
+                      - 'arn:aws:cognito-idp:us-east-2:${self:custom.common.accountId}:userpool/us-east-2_*'
+                      - 'arn:aws:cognito-idp:us-east-2:${self:custom.common.accountId}:userpool/auth--core--*--group-*'
+                - Effect: Allow
+                  Action:
+                  - s3:ListBucket
+                  - s3:*Object
+                  Resource:
+                    - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}'
+                    - 'arn:aws:s3:::${cf:auth--core-${self:custom.common.stage}.UserDataBucket}/*'
+                    - 'arn:aws:s3:::${cf:installers--core-${self:custom.common.stage}.CompanyDataBucket}'
+                    - 'arn:aws:s3:::${cf:installers--core-${self:custom.common.stage}.CompanyDataBucket}/*'
+                    - 'arn:aws:s3:::${cf:installers--core-${self:custom.common.stage}.ZipCodeDistanceBucket}'
+                    - 'arn:aws:s3:::${cf:installers--core-${self:custom.common.stage}.ZipCodeDistanceBucket}/*'
+                - Effect: Allow
+                  Action:
+                  - dynamodb:Batch*
+                  - dynamodb:*Item
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  Resource:
+                    - '${self:custom.alertsTableArn}'
+                    - '${self:custom.alertsTableArn}/index/*'
+                    - '${self:custom.installerCodesTableArn}'
+                    - '${self:custom.installerCodesTableArn}/index/*'
+                    - '${self:custom.installerServiceAreaTableArn}'
+                    - '${self:custom.installerServiceAreaTableArn}/index/*'
+                    - '${self:custom.jobsTableArn}'
+                    - '${self:custom.jobsTableArn}/index/*'
+                    - '${self:custom.jobScheduleTableArn}'
+                    - '${self:custom.jobScheduleTableArn}/index/*'
+                - Effect: Allow
+                  Action:
+                  - secretsmanager:GetSecretValue
+                  Resource: ${self:custom.common.secretsManagerArn}
+                - Effect: Allow
+                  Action:
+                  - lambda:InvokeFunction
+                  Resource: ${self:custom.certificationLambda}
+
